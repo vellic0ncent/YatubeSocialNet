@@ -1,20 +1,11 @@
 from django.contrib.auth.decorators import login_required
-from django.core.paginator import Paginator
 from django.shortcuts import render, get_object_or_404, redirect
 from django.views.decorators.cache import cache_page
 
 from .models import Post, Group, User, Follow
 from .forms import PostForm, CommentForm
 
-TOP_N_ENTRIES: int = 10
-
-
-def form_page_obj(request, entry_instance,
-                  n_entries=TOP_N_ENTRIES):
-    paginator = Paginator(entry_instance, n_entries)
-    page_number = request.GET.get('page')
-    page_obj = paginator.get_page(page_number)
-    return page_obj
+from .utils import form_page_obj
 
 
 @cache_page(20, key_prefix="index_page")
@@ -40,11 +31,9 @@ def group_posts(request, slug):
 def profile(request, username):
     template = 'posts/profile.html'
     author = get_object_or_404(User, username=username)
-    following = False
-    if request.user.is_authenticated:
-        following = True if Follow.objects.filter(
+    following = request.user.is_authenticated and (Follow.objects.filter(
             user=request.user, author=author
-        ).exists() else False
+        ).exists())
     posts = author.posts.select_related('group')
     page_obj = form_page_obj(request, posts)
     context = {'author': author, 'page_obj': page_obj, 'following': following}
@@ -55,8 +44,7 @@ def post_detail(request, post_id):
     template = 'posts/post_detail.html'
     post = get_object_or_404(Post, pk=post_id)
     comments = post.comments.select_related('post')
-    form = CommentForm(request.POST or None,
-                       files=request.FILES or None)
+    form = CommentForm()
     context = {'post': post, 'user': request.user,
                'form': form, 'comments': comments}
     return render(request, template, context)
@@ -118,9 +106,7 @@ def add_comment(request, post_id):
 def follow_index(request):
     """View for posts of all followed authors."""
     template = 'posts/follow.html'
-    user = request.user
-    authors = Follow.objects.filter(user=user).values('author')
-    posts = Post.objects.filter(author__in=authors)
+    posts = Post.objects.filter(author__following__user=request.user)
     page_obj = form_page_obj(request, posts)
     context = {'page_obj': page_obj}
     return render(request, template, context)
@@ -130,9 +116,10 @@ def follow_index(request):
 def profile_follow(request, username):
     """Subscribe for posts by this author."""
     author = get_object_or_404(User, username=username)
-    if request.user.pk == author.pk:
-        return redirect('posts:follow_index')
-    if Follow.objects.filter(user=request.user, author=author).exists():
+    user_is_author: bool = (request.user.pk == author.pk)
+    subscription_exists: bool = Follow.objects.filter(user=request.user,
+                                                      author=author).exists()
+    if user_is_author or subscription_exists:
         return redirect('posts:follow_index')
     Follow.objects.create(user=request.user, author=author)
     return redirect('posts:follow_index')
@@ -142,6 +129,7 @@ def profile_follow(request, username):
 def profile_unfollow(request, username):
     """Unsubscribe for posts by this author."""
     author = get_object_or_404(User, username=username)
-    follow_instance = Follow.objects.get(user=request.user, author=author)
-    follow_instance.delete()
+    subscription = Follow.objects.filter(user=request.user, author=author)
+    if subscription.exists():
+        subscription.delete()
     return redirect('posts:follow_index')

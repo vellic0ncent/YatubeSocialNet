@@ -32,8 +32,8 @@ def profile(request, username):
     template = 'posts/profile.html'
     author = get_object_or_404(User, username=username)
     following = request.user.is_authenticated and (Follow.objects.filter(
-            user=request.user, author=author
-        ).exists())
+        user=request.user, author=author
+    ).exists())
     posts = author.posts.select_related('group')
     page_obj = form_page_obj(request, posts)
     context = {'author': author, 'page_obj': page_obj, 'following': following}
